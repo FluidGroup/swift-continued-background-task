@@ -22,9 +22,20 @@ public actor ContinuedTaskManager {
 
     /// The operation's progress in its own units, including any child progress.
     public let progress: Progress
+    private let titleUpdater: @Sendable (String, String) async -> Void
+
+    init(
+      progress: Progress,
+      titleUpdater: @escaping @Sendable (String, String) async -> Void
+    ) {
+      self.progress = progress
+      self.titleUpdater = titleUpdater
+    }
 
     /// Renames the work in the system's continued-task UI and on the job.
-    public let updateTitle: @Sendable (String, String) async -> Void
+    public func updateTitle(_ title: String, subtitle: String) async {
+      await titleUpdater(title, subtitle)
+    }
 
   }
 

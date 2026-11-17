@@ -150,7 +150,7 @@ extension ContinuedTaskManager {
       progressObservation = observation
       return Context(
         progress: observation.source,
-        updateTitle: { [weak self] title, subtitle in
+        titleUpdater: { [weak self] title, subtitle in
           await self?.updateTitle(title, subtitle: subtitle)
         }
       )
