@@ -51,10 +51,14 @@ public actor ContinuedTaskManager {
         return
       }
 
-      switch background {
-      case .disabled:
+      switch (background, executor) {
+      case (.disabled, _):
         job.start(operation: operation)
-      case .whenAvailable:
+      case (.whenAvailable, .unsupported):
+        job.backgroundState = .unavailable(BackgroundUnavailable.unsupported)
+        job.start(operation: operation)
+      #if os(iOS) && !targetEnvironment(macCatalyst)
+      case (.whenAvailable, .system(let executor)):
         job.backgroundState = .requesting
         job.cancelRequest = {
           executor.cancel(identifier: identifier)
@@ -73,6 +77,7 @@ public actor ContinuedTaskManager {
           job.cancelRequest = nil
           job.start(operation: operation)
         }
+      #endif
       }
     }
 

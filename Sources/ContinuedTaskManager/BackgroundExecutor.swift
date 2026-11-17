@@ -6,48 +6,6 @@ enum BackgroundExecutor: Sendable {
   #if os(iOS) && !targetEnvironment(macCatalyst)
   case system(SystemBackgroundExecutor)
   #endif
-  case custom(
-    submit: @MainActor @Sendable (
-      _ identifier: String,
-      _ title: String,
-      _ subtitle: String,
-      _ launch: @escaping @MainActor (BackgroundExecution) -> Void
-    ) throws -> Void,
-    cancel: @MainActor @Sendable (String) -> Void
-  )
-
-  @MainActor
-  func submit(
-    identifier: String,
-    title: String,
-    subtitle: String,
-    launch: @escaping @MainActor (BackgroundExecution) -> Void
-  ) throws {
-    switch self {
-    case .unsupported:
-      throw BackgroundUnavailable.unsupported
-    #if os(iOS) && !targetEnvironment(macCatalyst)
-    case .system(let executor):
-      try executor.submit(identifier: identifier, title: title, subtitle: subtitle, launch: launch)
-    #endif
-    case .custom(let submit, _):
-      try submit(identifier, title, subtitle, launch)
-    }
-  }
-
-  @MainActor
-  func cancel(identifier: String) {
-    switch self {
-    case .unsupported:
-      break
-    #if os(iOS) && !targetEnvironment(macCatalyst)
-    case .system(let executor):
-      executor.cancel(identifier: identifier)
-    #endif
-    case .custom(_, let cancel):
-      cancel(identifier)
-    }
-  }
 
 }
 
