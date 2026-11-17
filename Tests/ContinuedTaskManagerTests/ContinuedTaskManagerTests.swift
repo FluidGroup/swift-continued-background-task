@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 import Testing
 @testable import ContinuedTaskManager
 
@@ -110,6 +111,7 @@ struct ContinuedTaskManagerTests {
   @Test func backgroundProgressUsesOneHundredUnits() async throws {
     let job = ContinuedTaskManager.Job<Int>(title: "Export", subtitle: "") { _ in }
     let systemProgress = Progress(totalUnitCount: 0)
+    systemProgress.isCancellable = true
     let execution = BackgroundExecution(progress: systemProgress) { _ in }
     let firstUpdate = AsyncStream<Void>.makeStream()
     let finalUpdate = AsyncStream<Void>.makeStream()
@@ -121,6 +123,7 @@ struct ContinuedTaskManagerTests {
     let firstGate = Gate()
     let finalGate = Gate()
 
+    #expect(!job.progress.isCancellable)
     job.start(execution: execution) { context in
       operationProgresses.continuation.yield(context.progress)
       context.progress.totalUnitCount = 2_000
@@ -138,6 +141,7 @@ struct ContinuedTaskManagerTests {
     var operationProgressIterator = operationProgresses.stream.makeAsyncIterator()
     let operationProgress = try #require(await operationProgressIterator.next())
     #expect(operationProgress !== job.progress)
+    #expect(systemProgress.isCancellable)
     #expect(systemProgress.totalUnitCount == 100)
     let didUpdate = await waitForProgress(systemProgress, completedUnitCount: 37)
     #expect(didUpdate)
@@ -199,6 +203,54 @@ struct ContinuedTaskManagerTests {
     observation.invalidate()
   }
 
+  @Test(arguments: [ContinuedTaskManager.Job<Int>.State.succeeded, .failed, .cancelled])
+  func finishedJobReleasesOperationProgress(expectedState: ContinuedTaskManager.Job<Int>.State) async {
+    @MainActor
+    final class References {
+
+      weak var progress: Progress?
+      weak var workItem: NSObject?
+
+    }
+
+    let job = ContinuedTaskManager.Job<Int>(title: "Export", subtitle: "") { _ in }
+    let started = AsyncStream<Void>.makeStream()
+    let gate = Gate()
+    let references = References()
+
+    job.start { context in
+      await MainActor.run {
+        let item = NSObject()
+        context.progress.setUserInfoObject(item, forKey: .init(rawValue: "workItem"))
+        references.progress = context.progress
+        references.workItem = item
+      }
+      context.progress.totalUnitCount = 4
+      context.progress.completedUnitCount = 3
+      await gate.wait(started: started.continuation)
+      if expectedState == .failed {
+        throw TestError.operation
+      }
+      return 42
+    }
+
+    for await _ in started.stream {
+      break
+    }
+    #expect(references.progress != nil)
+    #expect(references.workItem != nil)
+    if expectedState == .cancelled {
+      job.cancel()
+    }
+    await gate.open()
+    _ = try? await job.value
+
+    #expect(references.progress == nil)
+    #expect(references.workItem == nil)
+    #expect(job.state == expectedState)
+    #expect(job.progress.completedUnitCount == 75)
+  }
+
   @Test func backgroundProgressIncludesChildWork() async throws {
     let job = ContinuedTaskManager.Job<Int>(title: "Export", subtitle: "") { _ in }
     let systemProgress = Progress(totalUnitCount: 0)
@@ -224,6 +276,46 @@ struct ContinuedTaskManagerTests {
     await gate.open()
     #expect(try await job.value == 42)
     #expect(systemProgress.completedUnitCount == 100)
+  }
+
+  @Test(arguments: [false, true])
+  func cancellationFromStartNotificationSkipsOperation(observeBackgroundGrant: Bool) async {
+    let job = ContinuedTaskManager.Job<Int>(title: "Export", subtitle: "") { _ in }
+    job.backgroundState = .requesting
+    let counter = Counter()
+    var completions: [Bool] = []
+    let execution = BackgroundExecution(progress: Progress(totalUnitCount: 0)) {
+      completions.append($0)
+    }
+
+    var didCancel = false
+    withObservationTracking {
+      if observeBackgroundGrant {
+        _ = job.backgroundState
+      } else {
+        _ = job.state
+      }
+    } onChange: {
+      MainActor.assumeIsolated {
+        guard !didCancel else {
+          return
+        }
+        didCancel = true
+        job.cancel()
+      }
+    }
+
+    job.start(execution: execution) { _ in
+      await counter.increment()
+    }
+
+    await #expect(throws: CancellationError.self) {
+      try await job.value
+    }
+    #expect(didCancel)
+    #expect(job.state == .cancelled)
+    #expect(await counter.value == 0)
+    #expect(completions == [false])
   }
 
   @Test func pendingCancellationResolvesValueAndRejectsLateLaunch() async {
