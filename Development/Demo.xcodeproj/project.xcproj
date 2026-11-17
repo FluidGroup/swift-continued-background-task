@@ -1,0 +1,65 @@
+{
+  "default-configuration": "Debug",
+  "configurations": ["Debug", "Release"],
+  "localizations": { "development": "en" },
+  "packages": [{ "path": ".." }],
+  "files": [
+    {
+      "path": "Sources/DemoApp.swift",
+      "target-membership": ["Demo/compile-sources"]
+    },
+    { "path": "Info.plist" },
+    {
+      "kind": "group",
+      "name": "Products",
+      "children": [
+        { "path": "<PRODUCTS>/Demo.app", "type": "wrapper.application" }
+      ]
+    }
+  ],
+  "targets": [
+    {
+      "name": "Demo",
+      "id": "DE0000000000000000000001",
+      "product": "Products/Demo.app",
+      "product-type": "application",
+      "dependencies": [
+        { "kind": "package", "product-name": "ContinuedTaskManager" }
+      ],
+      "build-phases": ["compile-sources", "frameworks", "resources"],
+      "package-product-members": [
+        {
+          "product-name": "ContinuedTaskManager",
+          "build-phase": { "build-phase": "frameworks" }
+        }
+      ],
+      "build-settings": {
+        "CODE_SIGN_STYLE": "Automatic",
+        "CURRENT_PROJECT_VERSION": "1",
+        "GENERATE_INFOPLIST_FILE": "YES",
+        "INFOPLIST_FILE": "Info.plist",
+        "INFOPLIST_KEY_CFBundleDisplayName": "Continued Tasks",
+        "INFOPLIST_KEY_UILaunchScreen_Generation": "YES",
+        "INFOPLIST_KEY_UIApplicationSceneManifest_Generation": "YES",
+        "MARKETING_VERSION": "1.0",
+        "PRODUCT_BUNDLE_IDENTIFIER": "app.fluidgroup.ContinuedTaskDemo",
+        "PRODUCT_NAME": "$(TARGET_NAME)",
+        "SUPPORTED_PLATFORMS": ["iphoneos", "iphonesimulator"],
+        "SUPPORTS_MACCATALYST": "NO",
+        "TARGETED_DEVICE_FAMILY": "1,2"
+      }
+    }
+  ],
+  "build-settings": {
+    "CLANG_ENABLE_MODULES": "YES",
+    "IPHONEOS_DEPLOYMENT_TARGET": "17.0",
+    "SDKROOT": "iphoneos",
+    "SWIFT_VERSION": "6.0",
+    "SWIFT_STRICT_CONCURRENCY": "complete",
+    "SWIFT_OPTIMIZATION_LEVEL[config=Debug]": "-Onone",
+    "SWIFT_OPTIMIZATION_LEVEL[config=Release]": "-O",
+    "SWIFT_ACTIVE_COMPILATION_CONDITIONS[config=Debug]": "DEBUG",
+    "DEBUG_INFORMATION_FORMAT[config=Debug]": "dwarf",
+    "DEBUG_INFORMATION_FORMAT[config=Release]": "dwarf-with-dsym"
+  }
+}
