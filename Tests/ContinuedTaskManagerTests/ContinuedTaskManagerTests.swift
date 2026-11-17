@@ -25,6 +25,18 @@ struct ContinuedTaskManagerTests {
     }
   }
 
+  @Test func unsupportedBackgroundExecutionFallsBack() async throws {
+    let manager = ContinuedTaskManager(identifierPrefix: "com.example.test.work", executor: .unsupported)
+    let job = await manager.submit(title: "Export", subtitle: "") { _ in 42 }
+
+    #expect(try await job.value == 42)
+    #expect(job.state == .succeeded)
+    guard case .unavailable(BackgroundUnavailable.unsupported) = job.backgroundState else {
+      Issue.record("Unsupported background execution should remain observable")
+      return
+    }
+  }
+
   @Test func rejectionFallsBackAndLateLaunchDoesNotRepeatWork() async throws {
     let executor = TestExecutor()
     executor.rejection = TestError.rejected
@@ -226,7 +238,10 @@ struct ContinuedTaskManagerTests {
   }
 
   private func makeManager(_ executor: TestExecutor) -> ContinuedTaskManager {
-    ContinuedTaskManager(identifierPrefix: "com.example.test.work", executor: executor)
+    ContinuedTaskManager(
+      identifierPrefix: "com.example.test.work",
+      executor: .custom(submit: executor.submit, cancel: executor.cancel)
+    )
   }
 
 }
@@ -237,7 +252,7 @@ private enum TestError: Error, Equatable {
 }
 
 @MainActor
-private final class TestExecutor: BackgroundExecutor {
+private final class TestExecutor {
 
   var rejection: (any Error)?
   var submissionCount = 0

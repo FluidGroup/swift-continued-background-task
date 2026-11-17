@@ -16,7 +16,7 @@ public actor ContinuedTaskManager {
   }
 
   private let identifierPrefix: String
-  private let executor: any BackgroundExecutor
+  private let executor: BackgroundExecutor
   private var jobs: [UUID: any ManagedJob] = [:]
 
   public init(identifierPrefix: String) {
@@ -24,7 +24,7 @@ public actor ContinuedTaskManager {
     self.executor = makeBackgroundExecutor()
   }
 
-  init(identifierPrefix: String, executor: any BackgroundExecutor) {
+  init(identifierPrefix: String, executor: BackgroundExecutor) {
     self.identifierPrefix = identifierPrefix
     self.executor = executor
   }
