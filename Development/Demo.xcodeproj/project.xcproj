@@ -20,7 +20,7 @@
       "kind": "group",
       "name": "Products",
       "children": [
-        { "path": "<PRODUCTS>/Demo.app", "type": "wrapper.application" },
+        { "path": "<PRODUCTS>/Demo.app", "id": "8CCFD3149A13B62F7F85AB0E", "type": "wrapper.application" },
       ],
     },
   ],
@@ -47,6 +47,7 @@
       "build-settings": {
         "CODE_SIGN_STYLE": "Automatic",
         "CURRENT_PROJECT_VERSION": "1",
+        "DEVELOPMENT_TEAM": "KU2QEJ9K3Z",
         "GENERATE_INFOPLIST_FILE": "YES",
         "INFOPLIST_FILE": "Info.plist",
         "INFOPLIST_KEY_CFBundleDisplayName": "Continued Tasks",
@@ -55,10 +56,7 @@
         "MARKETING_VERSION": "1.0",
         "PRODUCT_BUNDLE_IDENTIFIER": "app.fluidgroup.ContinuedTaskDemo",
         "PRODUCT_NAME": "$(TARGET_NAME)",
-        "SUPPORTED_PLATFORMS": [
-          "iphoneos",
-          "iphonesimulator",
-        ],
+        "SUPPORTED_PLATFORMS": "iphoneos iphonesimulator",
         "SUPPORTS_MACCATALYST": "NO",
         "TARGETED_DEVICE_FAMILY": "1,2",
       },

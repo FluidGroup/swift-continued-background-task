@@ -43,7 +43,8 @@ private final class DemoModel {
 
       return digest
     }
-    jobs.insert(job, at: 0)
+    
+    jobs.append(job)
   }
 
 }
@@ -79,7 +80,7 @@ private struct DemoView: View {
             Text("Start a job to follow its progress.")
               .foregroundStyle(.secondary)
           }
-          ForEach(model.jobs) { job in
+          ForEach(model.jobs.reversed()) { job in
             JobRow(job: job)
           }
         }
