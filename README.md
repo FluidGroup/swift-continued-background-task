@@ -23,7 +23,7 @@ let url = try await job.value
 
 The manager is an actor. Operations are `@Sendable` and execute outside the main actor; observable job state uses `MainActor`. Job identifiers, titles, subtitles, and progress references are `nonisolated`. Jobs survive the submitting task or screen; cancelling a result waiter does not cancel the work. Independent submissions may overlap. Use `background: .disabled` for ordinary execution with the same progress and cancellation interface.
 
-`job.state` describes the work; `job.backgroundState` separately exposes whether continuation was granted or why it was unavailable. Pass `job.progress` to SwiftUI's `ProgressView`. Background requests use `.fail` internally, so rejected requests fall back without leaving an OS-queued duplicate.
+`job.state` describes the work; `job.backgroundState` separately exposes whether continuation was granted or why it was unavailable. Report progress through `context.progress`. The separate `job.progress` mirrors its completed fraction, including child progress, in 100 units on the main actor for use with SwiftUI's `ProgressView`. When background execution is granted, the system's progress is also updated in 100 units. Background requests use `.fail` internally, so rejected requests fall back without leaving an OS-queued duplicate.
 
 For iOS 26 continuation, add `com.example.app.export.*` to `BGTaskSchedulerPermittedIdentifiers` and `processing` to `UIBackgroundModes`. The prefix must begin with your app's bundle ID. The package supports iOS 17+ and macOS 14+ with ordinary execution on systems without continued processing.
 

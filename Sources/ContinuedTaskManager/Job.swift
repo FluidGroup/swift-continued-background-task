@@ -3,6 +3,7 @@ import Observation
 
 extension ContinuedTaskManager {
 
+  /// A submitted operation and its observable execution state.
   @MainActor
   @Observable
   public final class Job<Output: Sendable>: Identifiable, ManagedJob {
@@ -28,14 +29,21 @@ extension ContinuedTaskManager {
     public nonisolated let id = UUID()
     public nonisolated let title: String
     public nonisolated let subtitle: String
-    public nonisolated let progress = Progress(totalUnitCount: 0)
+    /// A 100-unit view of the operation's completed fraction.
+    ///
+    /// Report work through ``Context/progress``. This presentation progress is updated on
+    /// the main actor; call ``cancel()`` to request cancellation of the work.
+    public nonisolated let progress = Progress(totalUnitCount: 100)
     public private(set) var state: State = .pending
     public internal(set) var backgroundState: BackgroundState = .notRequested
 
+    private let operationProgress = Progress(totalUnitCount: 0)
     @ObservationIgnored var cancelRequest: (() -> Void)?
     @ObservationIgnored private var onFinish: (@Sendable (UUID) -> Void)?
     @ObservationIgnored private var worker: Task<Void, Never>?
     @ObservationIgnored private var execution: BackgroundExecution?
+    @ObservationIgnored private var progressObservation: NSKeyValueObservation?
+    @ObservationIgnored private var progressUpdates: Task<Void, Never>?
     @ObservationIgnored private var result: Result<Output, any Error>?
     @ObservationIgnored private var waiters: [CheckedContinuation<Output, any Error>] = []
     @ObservationIgnored private var cancellationRequested = false
@@ -93,8 +101,7 @@ extension ContinuedTaskManager {
       cancelRequest = nil
       if let execution {
         backgroundState = .granted
-        execution.progress.totalUnitCount = 1
-        execution.progress.addChild(progress, withPendingUnitCount: 1)
+        execution.progress.totalUnitCount = 100
         execution.onExpiration = { [weak self] in
           guard let self, self.result == nil else {
             return
@@ -104,8 +111,24 @@ extension ContinuedTaskManager {
         }
       }
 
+      // Only the latest fraction matters while the main actor is busy.
+      let (progressStream, progressContinuation) = AsyncStream<Void>.makeStream(
+        bufferingPolicy: .bufferingNewest(1)
+      )
+      progressObservation = operationProgress.observe(\.fractionCompleted, options: [.initial, .new]) { _, _ in
+        progressContinuation.yield(())
+      }
+      progressUpdates = Task { @MainActor [weak self] in
+        for await _ in progressStream {
+          guard let self, self.result == nil else {
+            return
+          }
+          self.updateProgress()
+        }
+      }
+
       state = .running
-      let context = Context(progress: progress)
+      let context = Context(progress: operationProgress)
       // An unstructured worker deliberately survives dismissal and the submitting task's cancellation.
       worker = Task.detached { [self] in
         let result: Result<Output, any Error>
@@ -118,6 +141,26 @@ extension ContinuedTaskManager {
           result = .failure(error)
         }
         await finish(result)
+      }
+    }
+
+    private func updateProgress() {
+      let fraction = operationProgress.fractionCompleted
+      guard fraction.isFinite else {
+        return
+      }
+
+      let normalizedFraction = min(max(fraction, 0), 1)
+      // Keep the system progress unfinished until the job reports full progress.
+      let completed = normalizedFraction < 1
+        ? min(99, Int64((normalizedFraction * 100).rounded()))
+        : 100
+      if progress.completedUnitCount != completed {
+        progress.completedUnitCount = completed
+      }
+      // Report units directly: a parent adds a child's units only when the child finishes.
+      if let systemProgress = execution?.progress, systemProgress.completedUnitCount != completed {
+        systemProgress.completedUnitCount = completed
       }
     }
 
@@ -145,6 +188,11 @@ extension ContinuedTaskManager {
         }
       }
 
+      updateProgress()
+      progressObservation?.invalidate()
+      progressObservation = nil
+      progressUpdates?.cancel()
+      progressUpdates = nil
       execution?.complete(success: state == .succeeded)
       execution = nil
       worker = nil

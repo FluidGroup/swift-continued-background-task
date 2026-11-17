@@ -74,17 +74,24 @@ final class SystemBackgroundExecutor {
     identifier: String,
     title: String,
     subtitle: String,
+    requiredResources: BackgroundTaskRequiredResources,
     launch: @escaping @MainActor (BackgroundExecution) -> Void
   ) throws {
+    
     guard #available(iOS 26, *) else {
       throw BackgroundUnavailable.unsupported
     }
+    
     guard let bundleID = Bundle.main.bundleIdentifier,
       identifier.hasPrefix(bundleID + "."), !identifier.contains("*")
     else {
       throw BackgroundUnavailable.invalidIdentifier
     }
-    let permitted = Bundle.main.object(forInfoDictionaryKey: "BGTaskSchedulerPermittedIdentifiers") as? [String] ?? []
+    
+    let permitted = Bundle.main.object(
+      forInfoDictionaryKey: "BGTaskSchedulerPermittedIdentifiers"
+    ) as? [String] ?? []
+    
     guard permitted.contains(where: { pattern in
       pattern == identifier || (pattern.hasSuffix(".*") && identifier.hasPrefix(String(pattern.dropLast())))
     }) else {
@@ -92,26 +99,36 @@ final class SystemBackgroundExecutor {
     }
 
     launches[identifier] = launch
+    
     // Registrations outlive individual jobs. The scheduler closure must not retain their operations.
-    let registered = BGTaskScheduler.shared.register(forTaskWithIdentifier: identifier, using: .main) { [weak self] task in
+    let registered = BGTaskScheduler.shared.register(
+      forTaskWithIdentifier: identifier,
+      using: .main
+    ) { [weak self] task in
+      
       MainActor.assumeIsolated {
+        
         guard let task = task as? BGContinuedProcessingTask else {
           task.setTaskCompleted(success: false)
           return
         }
+        
         guard let launch = self?.launches.removeValue(forKey: identifier) else {
           task.setTaskCompleted(success: false)
           return
         }
+        
         let execution = BackgroundExecution(progress: task.progress) { success in
           task.expirationHandler = nil
           task.setTaskCompleted(success: success)
         }
+        
         task.expirationHandler = { [weak execution] in
           Task { @MainActor in
             execution?.onExpiration?()
           }
         }
+        
         launch(execution)
       }
     }
@@ -121,8 +138,18 @@ final class SystemBackgroundExecutor {
       throw BackgroundUnavailable.registrationFailed
     }
 
-    let request = BGContinuedProcessingTaskRequest(identifier: identifier, title: title, subtitle: subtitle)
+    let request = BGContinuedProcessingTaskRequest(
+      identifier: identifier,
+      title: title,
+      subtitle: subtitle
+    )
+    
     request.strategy = .fail
+    
+    if requiredResources.contains(.gpu) {
+      request.requiredResources = .gpu
+    }
+        
     do {
       try BGTaskScheduler.shared.submit(request)
     } catch {

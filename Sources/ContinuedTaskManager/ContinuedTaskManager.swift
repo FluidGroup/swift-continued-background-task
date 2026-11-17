@@ -9,8 +9,10 @@ public actor ContinuedTaskManager {
     case disabled
   }
 
+  /// Values supplied to an operation while its job is running.
   public struct Context: Sendable {
 
+    /// The operation's progress in its own units, including any child progress.
     public let progress: Progress
 
   }
@@ -35,15 +37,23 @@ public actor ContinuedTaskManager {
     title: String,
     subtitle: String,
     background: BackgroundPolicy = .whenAvailable,
+    requiredResources: BackgroundTaskRequiredResources = [],
     operation: @escaping @Sendable (Context) async throws -> Output
   ) async -> Job<Output> {
-    let job = Job<Output>(title: title, subtitle: subtitle) { [self] id in
+    
+    let job = Job<Output>(
+      title: title,
+      subtitle: subtitle
+    ) { [self] id in
+      
       Task {
         await removeJob(id: id)
       }
     }
+    
     let identifier = "\(identifierPrefix).\(job.id.uuidString)"
-    jobs[job.id] = job
+    
+    addJob(id: job.id, job: job)
 
     await MainActor.run { [executor] in
       // cancelAll() can run while this submission waits for the main actor.
@@ -65,12 +75,20 @@ public actor ContinuedTaskManager {
         }
 
         do {
-          try executor.submit(identifier: identifier, title: title, subtitle: subtitle) { [weak job] execution in
+          try executor.submit(
+            identifier: identifier,
+            title: title,
+            subtitle: subtitle,
+            requiredResources: requiredResources
+          ) { [weak job] execution in
+            
             guard let job else {
               execution.complete(success: false)
               return
             }
+            
             job.start(execution: execution, operation: operation)
+            
           }
         } catch {
           job.backgroundState = .unavailable(error)
@@ -86,13 +104,17 @@ public actor ContinuedTaskManager {
 
   /// Cancels the jobs owned when this call begins; later submissions are independent.
   public func cancelAll() async {
-    for job in Array(jobs.values) {
+    for job in jobs.values {
       await job.cancel()
     }
   }
 
   private func removeJob(id: UUID) {
     jobs.removeValue(forKey: id)
+  }
+  
+  private func addJob(id: UUID, job: any ManagedJob) {
+    jobs[id] = job
   }
 
 }

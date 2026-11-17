@@ -107,6 +107,125 @@ struct ContinuedTaskManagerTests {
     #expect(job.state == .succeeded)
   }
 
+  @Test func backgroundProgressUsesOneHundredUnits() async throws {
+    let job = ContinuedTaskManager.Job<Int>(title: "Export", subtitle: "") { _ in }
+    let systemProgress = Progress(totalUnitCount: 0)
+    let execution = BackgroundExecution(progress: systemProgress) { _ in }
+    let firstUpdate = AsyncStream<Void>.makeStream()
+    let finalUpdate = AsyncStream<Void>.makeStream()
+    let operationProgresses = AsyncStream<Progress>.makeStream()
+    let updateThreads = AsyncStream<Bool>.makeStream()
+    let observation = job.progress.observe(\.completedUnitCount, options: [.new]) { _, _ in
+      updateThreads.continuation.yield(Thread.isMainThread)
+    }
+    let firstGate = Gate()
+    let finalGate = Gate()
+
+    job.start(execution: execution) { context in
+      operationProgresses.continuation.yield(context.progress)
+      context.progress.totalUnitCount = 2_000
+      context.progress.completedUnitCount = 740
+      await firstGate.wait(started: firstUpdate.continuation)
+      context.progress.completedUnitCount = 1_992
+      await finalGate.wait(started: finalUpdate.continuation)
+      context.progress.completedUnitCount = 2_000
+      return 42
+    }
+
+    for await _ in firstUpdate.stream {
+      break
+    }
+    var operationProgressIterator = operationProgresses.stream.makeAsyncIterator()
+    let operationProgress = try #require(await operationProgressIterator.next())
+    #expect(operationProgress !== job.progress)
+    #expect(systemProgress.totalUnitCount == 100)
+    let didUpdate = await waitForProgress(systemProgress, completedUnitCount: 37)
+    #expect(didUpdate)
+    #expect(job.progress.totalUnitCount == 100)
+    #expect(job.progress.completedUnitCount == 37)
+    #expect(operationProgress.totalUnitCount == 2_000)
+    #expect(operationProgress.completedUnitCount == 740)
+    if didUpdate {
+      var updateThreadIterator = updateThreads.stream.makeAsyncIterator()
+      #expect(await updateThreadIterator.next() == true)
+    }
+
+    await firstGate.open()
+    for await _ in finalUpdate.stream {
+      break
+    }
+    #expect(await waitForProgress(systemProgress, completedUnitCount: 99))
+
+    await finalGate.open()
+    #expect(try await job.value == 42)
+    #expect(systemProgress.completedUnitCount == 100)
+
+    operationProgress.completedUnitCount = 0
+    try await Task.sleep(for: .milliseconds(50))
+    #expect(job.progress.completedUnitCount == 100)
+    #expect(systemProgress.completedUnitCount == 100)
+    observation.invalidate()
+  }
+
+  @Test func ordinaryProgressUpdatesOnMainThread() async throws {
+    let job = ContinuedTaskManager.Job<Int>(title: "Export", subtitle: "") { _ in }
+    let started = AsyncStream<Void>.makeStream()
+    let updateThreads = AsyncStream<Bool>.makeStream()
+    let observation = job.progress.observe(\.completedUnitCount, options: [.new]) { _, _ in
+      updateThreads.continuation.yield(Thread.isMainThread)
+    }
+    let gate = Gate()
+
+    job.start { context in
+      context.progress.totalUnitCount = 8
+      context.progress.completedUnitCount = 2
+      await gate.wait(started: started.continuation)
+      context.progress.completedUnitCount = 8
+      return 42
+    }
+
+    for await _ in started.stream {
+      break
+    }
+    let didUpdate = await waitForProgress(job.progress, completedUnitCount: 25)
+    #expect(didUpdate)
+    if didUpdate {
+      var updateThreadIterator = updateThreads.stream.makeAsyncIterator()
+      #expect(await updateThreadIterator.next() == true)
+    }
+    await gate.open()
+    #expect(try await job.value == 42)
+    #expect(job.progress.completedUnitCount == 100)
+    observation.invalidate()
+  }
+
+  @Test func backgroundProgressIncludesChildWork() async throws {
+    let job = ContinuedTaskManager.Job<Int>(title: "Export", subtitle: "") { _ in }
+    let systemProgress = Progress(totalUnitCount: 0)
+    let execution = BackgroundExecution(progress: systemProgress) { _ in }
+    let started = AsyncStream<Void>.makeStream()
+    let gate = Gate()
+
+    job.start(execution: execution) { context in
+      context.progress.totalUnitCount = 10
+      let child = Progress(totalUnitCount: 4)
+      context.progress.addChild(child, withPendingUnitCount: 10)
+      child.completedUnitCount = 2
+      await gate.wait(started: started.continuation)
+      child.completedUnitCount = 4
+      return 42
+    }
+
+    for await _ in started.stream {
+      break
+    }
+    #expect(await waitForProgress(systemProgress, completedUnitCount: 50))
+    #expect(job.progress.completedUnitCount == 50)
+    await gate.open()
+    #expect(try await job.value == 42)
+    #expect(systemProgress.completedUnitCount == 100)
+  }
+
   @Test func pendingCancellationResolvesValueAndRejectsLateLaunch() async {
     let job = ContinuedTaskManager.Job<Int>(title: "Export", subtitle: "") { _ in }
     job.backgroundState = .requesting
@@ -141,11 +260,15 @@ struct ContinuedTaskManagerTests {
   @Test func expirationCancelsRunningWorkAndCompletesUnsuccessfully() async {
     let job = ContinuedTaskManager.Job<Int>(title: "Export", subtitle: "") { _ in }
     let started = AsyncStream<Void>.makeStream()
+    let operationProgresses = AsyncStream<Progress>.makeStream()
     var completions: [Bool] = []
     let execution = BackgroundExecution(progress: Progress(totalUnitCount: 0)) {
       completions.append($0)
     }
-    job.start(execution: execution) { _ in
+    job.start(execution: execution) { context in
+      operationProgresses.continuation.yield(context.progress)
+      context.progress.totalUnitCount = 10
+      context.progress.completedUnitCount = 3
       started.continuation.yield(())
       try await Task.sleep(for: .seconds(60))
       return 42
@@ -153,7 +276,10 @@ struct ContinuedTaskManagerTests {
     for await _ in started.stream {
       break
     }
+    var operationProgressIterator = operationProgresses.stream.makeAsyncIterator()
+    let operationProgress = await operationProgressIterator.next()
 
+    #expect(await waitForProgress(execution.progress, completedUnitCount: 30))
     execution.onExpiration?()
     await #expect(throws: CancellationError.self) {
       try await job.value
@@ -161,6 +287,10 @@ struct ContinuedTaskManagerTests {
     #expect(job.state == .cancelled)
     #expect(completions == [false])
     #expect(execution.onExpiration == nil)
+    operationProgress?.completedUnitCount = 9
+    try? await Task.sleep(for: .milliseconds(50))
+    #expect(job.progress.completedUnitCount == 30)
+    #expect(execution.progress.completedUnitCount == 30)
     guard case .expired = job.backgroundState else {
       Issue.record("Expiration should remain observable")
       return
@@ -272,6 +402,16 @@ struct ContinuedTaskManagerTests {
     for job in jobs {
       await #expect(throws: CancellationError.self) { try await job.value }
     }
+  }
+
+  private func waitForProgress(_ progress: Progress, completedUnitCount: Int64) async -> Bool {
+    for _ in 0..<200 {
+      if progress.completedUnitCount == completedUnitCount {
+        return true
+      }
+      try? await Task.sleep(for: .milliseconds(10))
+    }
+    return false
   }
 
 }
