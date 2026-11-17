@@ -27,8 +27,10 @@ extension ContinuedTaskManager {
     }
 
     public nonisolated let id = UUID()
-    public nonisolated let title: String
-    public nonisolated let subtitle: String
+    /// The title reported at submission and by later ``updateTitle(_:subtitle:)`` calls.
+    public private(set) var title: String
+    /// The subtitle reported at submission and by later ``updateTitle(_:subtitle:)`` calls.
+    public private(set) var subtitle: String
     /// The operation's completed fraction in 100 units, updated on the main actor.
     ///
     /// Report work through ``Context/progress`` and request cancellation with ``cancel()``.
@@ -46,7 +48,7 @@ extension ContinuedTaskManager {
     @ObservationIgnored private var waiters: [CheckedContinuation<Output, any Error>] = []
     @ObservationIgnored private var cancellationRequested = false
 
-    nonisolated init(
+    init(
       title: String,
       subtitle: String,
       onFinish: @escaping @Sendable (UUID) -> Void
@@ -56,6 +58,16 @@ extension ContinuedTaskManager {
       self.onFinish = onFinish
       self.progress = Progress(totalUnitCount: 100)
       self.progress.isCancellable = false
+    }
+
+    /// Renames the work shown in the system's continued-task UI.
+    ///
+    /// The update reaches the system task once it launches; before that it
+    /// only changes this job's own values.
+    public func updateTitle(_ title: String, subtitle: String) {
+      self.title = title
+      self.subtitle = subtitle
+      execution?.updateTitle?(title, subtitle)
     }
 
     /// Observing a result does not own the job. Cancel it explicitly with `cancel()`.
@@ -100,6 +112,7 @@ extension ContinuedTaskManager {
 
       self.execution = execution
       cancelRequest = nil
+      execution?.updateTitle?(title, subtitle)
 
       // An unstructured worker deliberately survives dismissal and the submitting task's cancellation.
       worker = Task.detached { [self] in

@@ -15,6 +15,7 @@ final class BackgroundExecution {
 
   let progress: Progress
   var onExpiration: (() -> Void)?
+  var updateTitle: ((String, String) -> Void)?
   private var completion: ((Bool) -> Void)?
 
   init(progress: Progress, completion: @escaping (Bool) -> Void) {
@@ -26,6 +27,7 @@ final class BackgroundExecution {
     let completion = completion
     self.completion = nil
     onExpiration = nil
+    updateTitle = nil
     completion?(success)
   }
 
@@ -75,6 +77,7 @@ final class SystemBackgroundExecutor {
     title: String,
     subtitle: String,
     requiredResources: BackgroundTaskRequiredResources,
+    strategy: ContinuedTaskManager.SubmissionStrategy,
     launch: @escaping @MainActor (BackgroundExecution) -> Void
   ) throws {
     
@@ -123,6 +126,10 @@ final class SystemBackgroundExecutor {
           task.setTaskCompleted(success: success)
         }
         
+        execution.updateTitle = { [weak task] title, subtitle in
+          task?.updateTitle(title, subtitle: subtitle)
+        }
+        
         task.expirationHandler = { [weak execution] in
           Task { @MainActor in
             execution?.onExpiration?()
@@ -144,7 +151,12 @@ final class SystemBackgroundExecutor {
       subtitle: subtitle
     )
     
-    request.strategy = .fail
+    switch strategy {
+    case .fail:
+      request.strategy = .fail
+    case .queue:
+      request.strategy = .queue
+    }
     
     if requiredResources.contains(.gpu) {
       request.requiredResources = .gpu

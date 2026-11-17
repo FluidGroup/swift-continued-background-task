@@ -406,6 +406,28 @@ struct ContinuedTaskManagerTests {
     #expect(completions == [false])
   }
 
+  @Test func updateTitleChangesMetadataAndReachesTheLaunchedTask() async throws {
+    let job = ContinuedTaskManager.Job<Int>(title: "Export", subtitle: "Preparing") { _ in }
+    var updates: [(String, String)] = []
+    let execution = BackgroundExecution(progress: Progress(totalUnitCount: 0)) { _ in }
+    execution.updateTitle = { updates.append(($0, $1)) }
+
+    job.updateTitle("Rendering", subtitle: "1 of 3")
+    #expect(job.title == "Rendering")
+    #expect(job.subtitle == "1 of 3")
+    #expect(updates.isEmpty)
+
+    job.start(execution: execution) { _ in 42 }
+    #expect(updates.map { "\($0)|\($1)" } == ["Rendering|1 of 3"])
+
+    job.updateTitle("Saving", subtitle: "Done soon")
+    #expect(updates.map { "\($0)|\($1)" } == ["Rendering|1 of 3", "Saving|Done soon"])
+    #expect(try await job.value == 42)
+
+    job.updateTitle("Complete", subtitle: "")
+    #expect(updates.count == 2)
+  }
+
   @Test func explicitCancellationWinsOverAnOperationReturningSuccess() async {
     let manager = ContinuedTaskManager(identifierPrefix: "com.example.test.work", executor: .unsupported)
     let started = AsyncStream<Void>.makeStream()
@@ -463,8 +485,8 @@ struct ContinuedTaskManagerTests {
       return 42
     }
 
-    #expect(job.title == "Export")
-    #expect(job.subtitle == "Preparing")
+    #expect(await job.title == "Export")
+    #expect(await job.subtitle == "Preparing")
     #expect(try await job.value == 42)
     #expect(job.progress.fractionCompleted == 1)
     #expect(await job.state == .succeeded)

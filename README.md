@@ -37,7 +37,9 @@ let checksums = try await job.value
 
 `submit` returns a `Job<Output>`; `job.value` waits for the result and throws the operation's error or `CancellationError`. Independent submissions can overlap. To skip the background request, pass `background: .disabled` to `submit`; progress, results, and cancellation work the same way.
 
-The manager is an actor. Its operation closure is `@Sendable`, runs outside the main actor, and must return a `Sendable` value. Read and update observable job state on `MainActor`; the job's `id`, `title`, `subtitle`, and progress reference are `nonisolated`.
+Requests use Apple's `.fail` submission strategy by default, so rejection falls back immediately without leaving a queued system request that could duplicate the work. Pass `strategy: .queue` to keep a request queued until the system can launch it; the job then stays in `.requesting` until launch, and `job.cancel()` still withdraws it.
+
+The manager is an actor. Its operation closure is `@Sendable`, runs outside the main actor, and must return a `Sendable` value. Read and update observable job state on `MainActor`; the job's `id` and progress reference are `nonisolated`.
 
 ## Add to your app
 
@@ -85,6 +87,8 @@ The manager's prefix must begin with your app's bundle identifier followed by a 
 
 Report real work through `context.progress`, using units appropriate to the operation. The separate `job.progress` mirrors its completed fraction, including child progress, in 100 units on the main actor. When continuation is granted, the system's progress is updated too. The last reported fraction remains available after the job finishes.
 
+Call `job.updateTitle(_:subtitle:)` as phases advance; the new values reach the system's continued-task UI once the task has launched and are readable on the job at any time.
+
 Use `job.progress` for display and `job.cancel()` to request cancellation:
 
 ```swift
@@ -128,7 +132,7 @@ Cancellation is cooperative: check `Task.checkCancellation()` between work units
 | `.expired` | The system expired the continued task or the person stopped it through system UI. |
 | `.cancelled` | The job was cancelled while its continuation request was pending. |
 
-A successful job can have `.unavailable` background state. Requests use Apple's `.fail` submission strategy, so rejection falls back immediately without leaving a queued system request that could duplicate the work.
+A successful job can have `.unavailable` background state.
 
 ### Request background GPU access
 
