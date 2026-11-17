@@ -1,0 +1,167 @@
+import Foundation
+
+enum BackgroundExecutor: Sendable {
+
+  case unsupported
+  #if os(iOS) && !targetEnvironment(macCatalyst)
+  case system(SystemBackgroundExecutor)
+  #endif
+
+}
+
+/// Keeps OS completion idempotent, including callbacks arriving after cancellation.
+@MainActor
+final class BackgroundExecution {
+
+  let progress: Progress
+  var onExpiration: (() -> Void)?
+  private var completion: ((Bool) -> Void)?
+
+  init(progress: Progress, completion: @escaping (Bool) -> Void) {
+    self.progress = progress
+    self.completion = completion
+  }
+
+  func complete(success: Bool) {
+    let completion = completion
+    self.completion = nil
+    onExpiration = nil
+    completion?(success)
+  }
+
+}
+
+enum BackgroundUnavailable: LocalizedError {
+  case unsupported
+  case invalidIdentifier
+  case missingPermittedIdentifier
+  case registrationFailed
+
+  var errorDescription: String? {
+    switch self {
+    case .unsupported:
+      "Continued background execution requires iOS 26 or later on a supported device."
+    case .invalidIdentifier:
+      "The identifier prefix must start with the app's bundle identifier and contain no wildcard."
+    case .missingPermittedIdentifier:
+      "Add the identifier prefix followed by .* to BGTaskSchedulerPermittedIdentifiers."
+    case .registrationFailed:
+      "The system could not register the continued background task."
+    }
+  }
+}
+
+func makeBackgroundExecutor() -> BackgroundExecutor {
+  #if os(iOS) && !targetEnvironment(macCatalyst)
+  if #available(iOS 26, *) {
+    return .system(SystemBackgroundExecutor())
+  }
+  #endif
+  return .unsupported
+}
+
+#if os(iOS) && !targetEnvironment(macCatalyst)
+import BackgroundTasks
+
+@MainActor
+final class SystemBackgroundExecutor {
+
+  private var launches: [String: @MainActor (BackgroundExecution) -> Void] = [:]
+
+  nonisolated init() {}
+
+  func submit(
+    identifier: String,
+    title: String,
+    subtitle: String,
+    requiredResources: BackgroundTaskRequiredResources,
+    launch: @escaping @MainActor (BackgroundExecution) -> Void
+  ) throws {
+    
+    guard #available(iOS 26, *) else {
+      throw BackgroundUnavailable.unsupported
+    }
+    
+    guard let bundleID = Bundle.main.bundleIdentifier,
+      identifier.hasPrefix(bundleID + "."), !identifier.contains("*")
+    else {
+      throw BackgroundUnavailable.invalidIdentifier
+    }
+    
+    let permitted = Bundle.main.object(
+      forInfoDictionaryKey: "BGTaskSchedulerPermittedIdentifiers"
+    ) as? [String] ?? []
+    
+    guard permitted.contains(where: { pattern in
+      pattern == identifier || (pattern.hasSuffix(".*") && identifier.hasPrefix(String(pattern.dropLast())))
+    }) else {
+      throw BackgroundUnavailable.missingPermittedIdentifier
+    }
+
+    launches[identifier] = launch
+    
+    // Registrations outlive individual jobs. The scheduler closure must not retain their operations.
+    let registered = BGTaskScheduler.shared.register(
+      forTaskWithIdentifier: identifier,
+      using: .main
+    ) { [weak self] task in
+      
+      MainActor.assumeIsolated {
+        
+        guard let task = task as? BGContinuedProcessingTask else {
+          task.setTaskCompleted(success: false)
+          return
+        }
+        
+        guard let launch = self?.launches.removeValue(forKey: identifier) else {
+          task.setTaskCompleted(success: false)
+          return
+        }
+        
+        let execution = BackgroundExecution(progress: task.progress) { success in
+          task.expirationHandler = nil
+          task.setTaskCompleted(success: success)
+        }
+        
+        task.expirationHandler = { [weak execution] in
+          Task { @MainActor in
+            execution?.onExpiration?()
+          }
+        }
+        
+        launch(execution)
+      }
+    }
+
+    guard registered else {
+      launches.removeValue(forKey: identifier)
+      throw BackgroundUnavailable.registrationFailed
+    }
+
+    let request = BGContinuedProcessingTaskRequest(
+      identifier: identifier,
+      title: title,
+      subtitle: subtitle
+    )
+    
+    request.strategy = .fail
+    
+    if requiredResources.contains(.gpu) {
+      request.requiredResources = .gpu
+    }
+        
+    do {
+      try BGTaskScheduler.shared.submit(request)
+    } catch {
+      launches.removeValue(forKey: identifier)
+      throw error
+    }
+  }
+
+  func cancel(identifier: String) {
+    launches.removeValue(forKey: identifier)
+    BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: identifier)
+  }
+
+}
+#endif

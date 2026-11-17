@@ -1,0 +1,11 @@
+[tasks.test]
+description = "Run the task manager's Swift Testing suite"
+run = "swift test"
+
+[tasks."demo:build"]
+description = "Build the JSON-format demo project (Xcode 27+)"
+run = "xcodebuild -project Development/Demo.xcodeproj -scheme Demo -configuration Debug -destination 'generic/platform=iOS Simulator' -derivedDataPath .build/Demo CODE_SIGNING_ALLOWED=NO build"
+
+[tasks."demo:open"]
+description = "Open the demo project with Xcode 27+ selected"
+run = 'open -a "$(xcode-select -p)/../.." Development/Demo.xcodeproj'
