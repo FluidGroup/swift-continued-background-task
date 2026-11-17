@@ -1,7 +1,7 @@
 import Foundation
 
 @MainActor
-protocol BackgroundExecutor: AnyObject {
+protocol BackgroundExecutor: AnyObject, Sendable {
 
   func submit(
     identifier: String,
@@ -56,7 +56,6 @@ enum BackgroundUnavailable: LocalizedError {
   }
 }
 
-@MainActor
 func makeBackgroundExecutor() -> any BackgroundExecutor {
   #if os(iOS) && !targetEnvironment(macCatalyst)
   if #available(iOS 26, *) {
@@ -68,6 +67,8 @@ func makeBackgroundExecutor() -> any BackgroundExecutor {
 
 @MainActor
 private final class UnsupportedBackgroundExecutor: BackgroundExecutor {
+
+  nonisolated init() {}
 
   func submit(
     identifier: String,
@@ -90,6 +91,8 @@ import BackgroundTasks
 private final class SystemBackgroundExecutor: BackgroundExecutor {
 
   private var launches: [String: @MainActor (BackgroundExecution) -> Void] = [:]
+
+  nonisolated init() {}
 
   func submit(
     identifier: String,

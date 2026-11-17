@@ -23,8 +23,8 @@ private final class DemoModel {
   let manager = ContinuedTaskManager(identifierPrefix: "app.fluidgroup.ContinuedTaskDemo.work")
   private(set) var jobs: [ContinuedTaskManager.Job<String>] = []
 
-  func start(background: ContinuedTaskManager.BackgroundPolicy) {
-    let job = manager.submit(
+  func start(background: ContinuedTaskManager.BackgroundPolicy) async {
+    let job = await manager.submit(
       title: "Compute checksums",
       subtitle: "Hashing 32 GiB of sample data",
       background: background
@@ -61,10 +61,14 @@ private struct DemoView: View {
       List {
         Section {
           Button("Start with background continuation", systemImage: "play.fill") {
-            model.start(background: .whenAvailable)
+            Task {
+              await model.start(background: .whenAvailable)
+            }
           }
           Button("Start without background continuation", systemImage: "iphone") {
-            model.start(background: .disabled)
+            Task {
+              await model.start(background: .disabled)
+            }
           }
         } footer: {
           Text("The job hashes sample data on the CPU. On a supported device, start a job and leave the app to see system progress. A rejected continuation request still runs the job while the app is active.")
@@ -83,7 +87,9 @@ private struct DemoView: View {
       .navigationTitle("Continued Tasks")
       .toolbar {
         Button("Cancel all", role: .destructive) {
-          model.manager.cancelAll()
+          Task {
+            await model.manager.cancelAll()
+          }
         }
       }
     }

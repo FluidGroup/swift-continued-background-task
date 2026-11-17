@@ -5,9 +5,9 @@ Run user-initiated async work with optional iOS 26 continued background executio
 ```swift
 import ContinuedTaskManager
 
-// Keep the manager at app lifetime. Submission and observable job state use the main actor.
+// Keep the manager at app lifetime. Observable job state uses the main actor.
 let manager = ContinuedTaskManager(identifierPrefix: "com.example.app.export")
-let job = manager.submit(title: "Export photos", subtitle: "Preparing") { context in
+let job = await manager.submit(title: "Export photos", subtitle: "Preparing") { context in
   context.progress.totalUnitCount = Int64(photos.count)
   for photo in photos {
     try Task.checkCancellation()
@@ -18,10 +18,10 @@ let job = manager.submit(title: "Export photos", subtitle: "Preparing") { contex
 }
 
 let url = try await job.value
-// job.cancel() requests cancellation; manager.cancelAll() cancels all owned jobs.
+// await job.cancel() requests cancellation; await manager.cancelAll() cancels all owned jobs.
 ```
 
-Operations are `@Sendable` and execute outside the main actor. Jobs survive the submitting task or screen; cancelling a result waiter does not cancel the work. Independent submissions may overlap. Use `background: .disabled` for ordinary execution with the same progress and cancellation interface.
+The manager is an actor. Operations are `@Sendable` and execute outside the main actor; observable job state uses `MainActor`. Job identifiers, titles, subtitles, and progress references are `nonisolated`. Jobs survive the submitting task or screen; cancelling a result waiter does not cancel the work. Independent submissions may overlap. Use `background: .disabled` for ordinary execution with the same progress and cancellation interface.
 
 `job.state` describes the work; `job.backgroundState` separately exposes whether continuation was granted or why it was unavailable. Pass `job.progress` to SwiftUI's `ProgressView`. Background requests use `.fail` internally, so rejected requests fall back without leaving an OS-queued duplicate.
 

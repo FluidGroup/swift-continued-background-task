@@ -9,7 +9,7 @@ struct ContinuedTaskManagerTests {
   @Test func disabledRunsWithoutRequestingBackgroundTime() async throws {
     let executor = TestExecutor()
     let manager = makeManager(executor)
-    let job = manager.submit(title: "Export", subtitle: "", background: .disabled) { context in
+    let job = await manager.submit(title: "Export", subtitle: "", background: .disabled) { context in
       context.progress.totalUnitCount = 2
       context.progress.completedUnitCount = 2
       return 42
@@ -30,7 +30,7 @@ struct ContinuedTaskManagerTests {
     executor.rejection = TestError.rejected
     let manager = makeManager(executor)
     let counter = Counter()
-    let job = manager.submit(title: "Export", subtitle: "") { _ in
+    let job = await manager.submit(title: "Export", subtitle: "") { _ in
       await counter.increment()
     }
 
@@ -52,7 +52,7 @@ struct ContinuedTaskManagerTests {
     let executor = TestExecutor()
     let manager = makeManager(executor)
     let counter = Counter()
-    let job = manager.submit(title: "Export", subtitle: "") { context in
+    let job = await manager.submit(title: "Export", subtitle: "") { context in
       context.progress.totalUnitCount = 10
       context.progress.completedUnitCount = 10
       return await counter.increment()
@@ -80,7 +80,7 @@ struct ContinuedTaskManagerTests {
     let executor = TestExecutor()
     let manager = makeManager(executor)
     let counter = Counter()
-    let job = manager.submit(title: "Export", subtitle: "") { _ in
+    let job = await manager.submit(title: "Export", subtitle: "") { _ in
       await counter.increment()
     }
 
@@ -100,7 +100,7 @@ struct ContinuedTaskManagerTests {
     let executor = TestExecutor()
     let manager = makeManager(executor)
     let started = AsyncStream<Void>.makeStream()
-    let job = manager.submit(title: "Export", subtitle: "") { _ in
+    let job = await manager.submit(title: "Export", subtitle: "") { _ in
       started.continuation.yield(())
       try await Task.sleep(for: .seconds(60))
       return 42
@@ -126,7 +126,7 @@ struct ContinuedTaskManagerTests {
   @Test func operationFailurePreservesErrorAndReportsFailure() async {
     let executor = TestExecutor()
     let manager = makeManager(executor)
-    let job = manager.submit(title: "Export", subtitle: "") { _ -> Int in
+    let job = await manager.submit(title: "Export", subtitle: "") { _ -> Int in
       throw TestError.operation
     }
     _ = executor.launch()
@@ -143,7 +143,7 @@ struct ContinuedTaskManagerTests {
     let manager = makeManager(executor)
     let started = AsyncStream<Void>.makeStream()
     let gate = Gate()
-    let job = manager.submit(title: "Export", subtitle: "", background: .disabled) { _ in
+    let job = await manager.submit(title: "Export", subtitle: "", background: .disabled) { _ in
       await gate.wait(started: started.continuation)
       return 42
     }
@@ -162,7 +162,7 @@ struct ContinuedTaskManagerTests {
   @Test func cancellingAWaiterDoesNotCancelTheJob() async throws {
     let executor = TestExecutor()
     let manager = makeManager(executor)
-    let job = manager.submit(title: "Export", subtitle: "") { _ in 42 }
+    let job = await manager.submit(title: "Export", subtitle: "") { _ in 42 }
     let waiter = Task { try await job.value }
     waiter.cancel()
     _ = executor.launch()
@@ -175,13 +175,54 @@ struct ContinuedTaskManagerTests {
   @Test func cancelAllOwnsJobsWithDifferentOutputTypes() async {
     let executor = TestExecutor()
     let manager = makeManager(executor)
-    let first = manager.submit(title: "First", subtitle: "") { _ in 42 }
-    let second = manager.submit(title: "Second", subtitle: "") { _ in "Done" }
-    manager.cancelAll()
+    let first = await manager.submit(title: "First", subtitle: "") { _ in 42 }
+    let second = await manager.submit(title: "Second", subtitle: "") { _ in "Done" }
+    await manager.cancelAll()
 
     await #expect(throws: CancellationError.self) { try await first.value }
     await #expect(throws: CancellationError.self) { try await second.value }
     #expect(executor.cancellationCount == 2)
+  }
+
+  @Test nonisolated func managerAndJobMetadataAreUsableOutsideMainActor() async throws {
+    let manager = ContinuedTaskManager(identifierPrefix: "com.example.test.work")
+    let job = await manager.submit(title: "Export", subtitle: "Preparing", background: .disabled) { context in
+      context.progress.totalUnitCount = 1
+      context.progress.completedUnitCount = 1
+      return 42
+    }
+
+    #expect(job.title == "Export")
+    #expect(job.subtitle == "Preparing")
+    #expect(try await job.value == 42)
+    #expect(job.progress.fractionCompleted == 1)
+    #expect(await job.state == .succeeded)
+    await manager.cancelAll()
+  }
+
+  @Test nonisolated func cancelAllOwnsConcurrentSubmissions() async {
+    let manager = ContinuedTaskManager(identifierPrefix: "com.example.test.work")
+    let jobs = await withTaskGroup(of: ContinuedTaskManager.Job<Int>.self) { group in
+      for index in 0..<8 {
+        group.addTask {
+          await manager.submit(title: "Job \(index)", subtitle: "", background: .disabled) { _ in
+            try await Task.sleep(for: .seconds(60))
+            return index
+          }
+        }
+      }
+
+      var jobs: [ContinuedTaskManager.Job<Int>] = []
+      for await job in group {
+        jobs.append(job)
+      }
+      return jobs
+    }
+
+    await manager.cancelAll()
+    for job in jobs {
+      await #expect(throws: CancellationError.self) { try await job.value }
+    }
   }
 
   private func makeManager(_ executor: TestExecutor) -> ContinuedTaskManager {

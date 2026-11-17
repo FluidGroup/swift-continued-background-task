@@ -16,7 +16,7 @@ extension ContinuedTaskManager {
     }
 
     /// Describes the continuation request, not whether the app is currently in the background.
-    public enum BackgroundState {
+    public enum BackgroundState: Sendable {
       case notRequested
       case requesting
       case granted
@@ -26,23 +26,28 @@ extension ContinuedTaskManager {
     }
 
     public nonisolated let id = UUID()
-    public let title: String
-    public let subtitle: String
-    public let progress = Progress(totalUnitCount: 0)
+    public nonisolated let title: String
+    public nonisolated let subtitle: String
+    public nonisolated let progress = Progress(totalUnitCount: 0)
     public private(set) var state: State = .pending
     public internal(set) var backgroundState: BackgroundState = .notRequested
 
     @ObservationIgnored var cancelRequest: (() -> Void)?
-    @ObservationIgnored var onFinish: (() -> Void)?
+    @ObservationIgnored private var onFinish: (@Sendable (UUID) -> Void)?
     @ObservationIgnored private var worker: Task<Void, Never>?
     @ObservationIgnored private var execution: BackgroundExecution?
     @ObservationIgnored private var result: Result<Output, any Error>?
     @ObservationIgnored private var waiters: [CheckedContinuation<Output, any Error>] = []
     @ObservationIgnored private var cancellationRequested = false
 
-    init(title: String, subtitle: String) {
+    nonisolated init(
+      title: String,
+      subtitle: String,
+      onFinish: @escaping @Sendable (UUID) -> Void
+    ) {
       self.title = title
       self.subtitle = subtitle
+      self.onFinish = onFinish
     }
 
     /// Observing a result does not own the job. Cancel it explicitly with `cancel()`.
@@ -146,7 +151,7 @@ extension ContinuedTaskManager {
       cancelRequest = nil
       let onFinish = onFinish
       self.onFinish = nil
-      onFinish?()
+      onFinish?(id)
 
       let waiters = waiters
       self.waiters.removeAll()
