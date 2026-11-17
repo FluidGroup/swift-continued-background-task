@@ -1,4 +1,5 @@
 import ContinuedTaskManager
+import CryptoKit
 import Observation
 import SwiftUI
 
@@ -24,18 +25,23 @@ private final class DemoModel {
 
   func start(background: ContinuedTaskManager.BackgroundPolicy) {
     let job = manager.submit(
-      title: "Wait for 60 seconds",
-      subtitle: "Updating progress once per second",
+      title: "Compute checksums",
+      subtitle: "Hashing 32 GiB of sample data",
       background: background
     ) { context in
-      context.progress.totalUnitCount = 60
+      let block = Data(repeating: 0x5A, count: 1_048_576)
+      context.progress.totalUnitCount = 512
+      var digest = ""
 
-      for step in 1...60 {
-        try await Task.sleep(for: .seconds(1))
-        context.progress.completedUnitCount = Int64(step)
+      for batch in 0..<512 {
+        for _ in 0..<64 {
+          try Task.checkCancellation()
+          digest = SHA256.hash(data: block).description
+        }
+        context.progress.completedUnitCount = Int64(batch + 1)
       }
 
-      return "Finished waiting for 60 seconds"
+      return digest
     }
     jobs.insert(job, at: 0)
   }
@@ -61,7 +67,7 @@ private struct DemoView: View {
             model.start(background: .disabled)
           }
         } footer: {
-          Text("The job waits for 60 seconds and reports progress every second. On a supported device, start a job and leave the app to try background continuation. A rejected continuation request still runs the job while the app is active.")
+          Text("The job hashes sample data on the CPU. On a supported device, start a job and leave the app to see system progress. A rejected continuation request still runs the job while the app is active.")
         }
 
         Section("Jobs") {
