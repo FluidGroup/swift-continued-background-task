@@ -87,7 +87,7 @@ The manager's prefix must begin with your app's bundle identifier followed by a 
 
 Report real work through `context.progress`, using units appropriate to the operation. The separate `job.progress` mirrors its completed fraction, including child progress, in 100 units on the main actor. When continuation is granted, the system's progress is updated too. The last reported fraction remains available after the job finishes.
 
-Call `job.updateTitle(_:subtitle:)` as phases advance; the new values reach the system's continued-task UI once the task has launched and are readable on the job at any time.
+Call `job.updateTitle(_:subtitle:)` as phases advance — from inside the operation, `await context.updateTitle(_:subtitle:)` does the same — and the new values reach the system's continued-task UI once the task has launched.
 
 Use `job.progress` for display and `job.cancel()` to request cancellation:
 

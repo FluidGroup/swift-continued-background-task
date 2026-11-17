@@ -148,7 +148,12 @@ extension ContinuedTaskManager {
 
       let observation = ProgressObservation(presentation: progress, system: execution?.progress)
       progressObservation = observation
-      return Context(progress: observation.source)
+      return Context(
+        progress: observation.source,
+        updateTitle: { [weak self] title, subtitle in
+          await self?.updateTitle(title, subtitle: subtitle)
+        }
+      )
     }
 
     private func finish(_ proposedResult: Result<Output, any Error>) {
