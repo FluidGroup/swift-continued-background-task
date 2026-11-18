@@ -9,11 +9,33 @@ public actor ContinuedTaskManager {
     case disabled
   }
 
+  /// How the system handles a request it cannot launch immediately.
+  public enum SubmissionStrategy: Sendable {
+    /// Reject the request; the job then runs ordinarily.
+    case fail
+    /// Keep the request queued until the system launches it.
+    case queue
+  }
+
   /// Values supplied to an operation while its job is running.
   public struct Context: Sendable {
 
     /// The operation's progress in its own units, including any child progress.
     public let progress: Progress
+    private let titleUpdater: @Sendable (String, String) async -> Void
+
+    init(
+      progress: Progress,
+      titleUpdater: @escaping @Sendable (String, String) async -> Void
+    ) {
+      self.progress = progress
+      self.titleUpdater = titleUpdater
+    }
+
+    /// Renames the work in the system's continued-task UI and on the job.
+    public func updateTitle(_ title: String, subtitle: String) async {
+      await titleUpdater(title, subtitle)
+    }
 
   }
 
@@ -37,22 +59,25 @@ public actor ContinuedTaskManager {
     title: String,
     subtitle: String,
     background: BackgroundPolicy = .whenAvailable,
+    strategy: SubmissionStrategy = .fail,
     requiredResources: BackgroundTaskRequiredResources = [],
     operation: @escaping @Sendable (Context) async throws -> Output
   ) async -> Job<Output> {
     
-    let job = Job<Output>(
-      title: title,
-      subtitle: subtitle
-    ) { [self] id in
-      
-      Task {
-        await removeJob(id: id)
+    let job = await MainActor.run {
+      Job<Output>(
+        title: title,
+        subtitle: subtitle
+      ) { [self] id in
+
+        Task {
+          await removeJob(id: id)
+        }
       }
     }
-    
+
     let identifier = "\(identifierPrefix).\(job.id.uuidString)"
-    
+
     addJob(id: job.id, job: job)
 
     await MainActor.run { [executor] in
@@ -79,7 +104,8 @@ public actor ContinuedTaskManager {
             identifier: identifier,
             title: title,
             subtitle: subtitle,
-            requiredResources: requiredResources
+            requiredResources: requiredResources,
+            strategy: strategy
           ) { [weak job] execution in
             
             guard let job else {
